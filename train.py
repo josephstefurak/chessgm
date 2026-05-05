@@ -1,43 +1,24 @@
-"""
-Train the evaluator model via self-play.
-
-Run this script standalone:
-    python train.py
-
-It will:
-1. Play N games of bot vs bot
-2. Record (features, outcome) for each position
-3. Train a linear regression model
-4. Save the model to data/model.pkl
-
-After training, evaluator.py can load this model instead of using hardcoded material.
-"""
-
 import csv
 import os
 import pickle
 import random
 
 import chess
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 
 from bot import get_best_move
 from features import extract_features, FEATURE_NAMES
 
-DATA_DIR = "data"
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CSV_PATH = os.path.join(DATA_DIR, "games.csv")
 MODEL_PATH = os.path.join(DATA_DIR, "model.pkl")
-NUM_GAMES = 50
-MAX_MOVES = 150  # Cap game length to avoid infinite games
+NUM_GAMES = 300
+MAX_MOVES = 150
 
 
-def play_game(depth=1):
-    """
-    Play one self-play game. Returns list of (features, outcome) tuples.
-    Outcome is from White's perspective: 1 = White wins, -1 = Black wins, 0 = draw.
-    """
+def play_game(depth=2):
     board = chess.Board()
     positions = []
 
@@ -48,7 +29,6 @@ def play_game(depth=1):
         features = extract_features(board)
         positions.append(features)
 
-        # Add some randomness early in the game for variety
         if board.fullmove_number <= 4 and random.random() < 0.5:
             move = random.choice(list(board.legal_moves))
         else:
@@ -56,14 +36,13 @@ def play_game(depth=1):
 
         board.push(move)
 
-    # Determine outcome
     result = board.result()
     if result == "1-0":
         outcome = 1.0
     elif result == "0-1":
         outcome = -1.0
     else:
-        outcome = 0.0  # Draw or unfinished (treat as draw)
+        outcome = 0.0
 
     return [(f, outcome) for f in positions]
 
@@ -72,7 +51,7 @@ def generate_data(num_games):
     all_data = []
     for i in range(num_games):
         print(f"Playing game {i + 1}/{num_games}...")
-        game_data = play_game(depth=1)
+        game_data = play_game(depth=2)
         all_data.extend(game_data)
     return all_data
 
@@ -99,14 +78,15 @@ def load_csv():
 
 def train_model(X, y):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = LinearRegression()
+    print("Training GradientBoostingRegressor...")
+    model = GradientBoostingRegressor(n_estimators=200, max_depth=4, learning_rate=0.05)
     model.fit(X_train, y_train)
     preds = model.predict(X_test)
     mse = mean_squared_error(y_test, preds)
     print(f"Test MSE: {mse:.4f}")
-    print("Feature weights:")
-    for name, coef in zip(FEATURE_NAMES, model.coef_):
-        print(f"  {name}: {coef:.4f}")
+    print("Feature importances:")
+    for name, imp in sorted(zip(FEATURE_NAMES, model.feature_importances_), key=lambda x: -x[1]):
+        print(f"  {name}: {imp:.4f}")
     return model
 
 
@@ -118,12 +98,11 @@ def save_model(model):
 
 
 if __name__ == "__main__":
-    print(f"Generating {NUM_GAMES} self-play games...")
+    print(f"Generating {NUM_GAMES} self-play games at depth 2...")
     data = generate_data(NUM_GAMES)
     save_csv(data)
-
     print("\nTraining model...")
     X, y = load_csv()
     model = train_model(X, y)
     save_model(model)
-    print("\nDone. To use the trained model, update evaluator.py to load data/model.pkl.")
+    print("\nDone. Restart lichess-bot to use the new model.")

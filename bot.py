@@ -1,4 +1,5 @@
 import chess
+import time
 from evaluator import evaluate
 
 PIECE_VALUES_SIMPLE = {
@@ -10,10 +11,8 @@ PIECE_VALUES_SIMPLE = {
     chess.KING: 0,
 }
 
-# Transposition table: maps board hash -> (score, depth, flag)
-# flag: 'exact', 'lower' (alpha), 'upper' (beta)
 _tt = {}
-TT_MAX_SIZE = 1_000_000  # cap memory usage
+TT_MAX_SIZE = 1_000_000
 
 
 def score_move(board, move):
@@ -68,12 +67,14 @@ def quiescence(board, alpha, beta, maximizing):
     return alpha if maximizing else beta
 
 
-def minimax(board, depth, alpha, beta, maximizing):
+def minimax(board, depth, alpha, beta, maximizing, deadline=None):
+    # Check time — abort search if deadline exceeded
+    if deadline and time.time() > deadline:
+        raise TimeoutError()
+
     orig_alpha = alpha
     key = board._transposition_key()
 
-    # --- Transposition table lookup ---
-    # If we've seen this position before at equal or greater depth, reuse the result
     if key in _tt:
         tt_score, tt_depth, tt_flag = _tt[key]
         if tt_depth >= depth:
@@ -97,7 +98,7 @@ def minimax(board, depth, alpha, beta, maximizing):
 
     for move in legal_moves:
         board.push(move)
-        score = minimax(board, depth - 1, alpha, beta, not maximizing)
+        score = minimax(board, depth - 1, alpha, beta, not maximizing, deadline)
         board.pop()
 
         if maximizing:
@@ -110,8 +111,6 @@ def minimax(board, depth, alpha, beta, maximizing):
         if beta <= alpha:
             break
 
-    # --- Transposition table store ---
-    # Determine flag based on whether result improved alpha/beta
     if best_score <= orig_alpha:
         flag = 'upper'
     elif best_score >= beta:
@@ -125,8 +124,9 @@ def minimax(board, depth, alpha, beta, maximizing):
     return best_score
 
 
-def get_best_move(board, depth=3):
-    _tt.clear()  # Clear table at start of each move to avoid stale entries across turns
+def get_best_move(board, depth=5):
+    """Fixed depth search — used for training and local play."""
+    _tt.clear()
     best_move = None
     maximizing = board.turn == chess.BLACK
     best_score = float("-inf") if maximizing else float("inf")
@@ -142,5 +142,45 @@ def get_best_move(board, depth=3):
         elif not maximizing and score < best_score:
             best_score = score
             best_move = move
+
+    return best_move
+
+
+def get_best_move_timed(board, move_time):
+    """
+    Iterative deepening with time management.
+    Searches depth 1, 2, 3... until move_time seconds runs out.
+    Always returns the best move found so far, so it never times out.
+    Used by uci.py for Lichess games.
+    """
+    _tt.clear()
+    deadline = time.time() + move_time
+    maximizing = board.turn == chess.BLACK
+    best_move = list(board.legal_moves)[0]  # fallback
+
+    for depth in range(1, 20):
+        try:
+            candidate_move = None
+            candidate_score = float("-inf") if maximizing else float("inf")
+
+            for move in order_moves(board, list(board.legal_moves)):
+                board.push(move)
+                score = minimax(board, depth - 1, float("-inf"), float("inf"), not maximizing, deadline)
+                board.pop()
+
+                if maximizing and score > candidate_score:
+                    candidate_score = score
+                    candidate_move = move
+                elif not maximizing and score < candidate_score:
+                    candidate_score = score
+                    candidate_move = move
+
+            # Only update best_move if we completed the full depth search
+            if candidate_move:
+                best_move = candidate_move
+
+        except TimeoutError:
+            # Time ran out mid-search — return the best move from the last completed depth
+            break
 
     return best_move
