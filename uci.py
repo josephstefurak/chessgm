@@ -1,17 +1,11 @@
-"""
-UCI wrapper with time management.
-Reads wtime/btime from the go command and allocates time per move dynamically.
-"""
-
 import sys
 import chess
 from bot import get_best_move_timed
+from opening_book import get_book_move
 
-# Fraction of remaining time to use per move
-# 1/30 means we assume ~30 moves left in the game
 TIME_FRACTION = 1 / 30
-MIN_MOVE_TIME = 0.1   # never spend less than 0.1s
-MAX_MOVE_TIME = 10.0  # never spend more than 10s
+MIN_MOVE_TIME = 0.1
+MAX_MOVE_TIME = 10.0
 
 
 def send(msg):
@@ -19,7 +13,6 @@ def send(msg):
 
 
 def parse_go(line, board):
-    """Parse the go command and return how many seconds to think."""
     parts = line.split()
     wtime = btime = None
 
@@ -39,7 +32,7 @@ def parse_go(line, board):
     elif board.turn == chess.BLACK and btime is not None:
         move_time = (btime / 1000.0) * TIME_FRACTION
     else:
-        move_time = 2.0  # fallback if no time info
+        move_time = 2.0
 
     return max(MIN_MOVE_TIME, min(MAX_MOVE_TIME, move_time))
 
@@ -81,8 +74,11 @@ def main():
                         board.push_uci(uci)
 
         elif line.startswith("go"):
-            move_time = parse_go(line, board)
-            move = get_best_move_timed(board, move_time)
+            # Try opening book first — instant move, no search needed
+            move = get_book_move(board)
+            if move is None:
+                move_time = parse_go(line, board)
+                move = get_best_move_timed(board, move_time)
             send(f"bestmove {move.uci()}")
 
         elif line == "quit":

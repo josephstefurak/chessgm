@@ -1,14 +1,27 @@
 import chess
 import os
 import pickle
+import torch
 from features import extract_features
+from neural_net import ChessNet, board_to_tensor, load_model
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "model.pkl")
+# Neural net model (preferred if available)
+NEURAL_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "neural_model.pt")
+_neural_model = load_model(NEURAL_MODEL_PATH)
+if _neural_model is not None:
+    print("Loaded neural network model.")
+
+# Sklearn fallback model
+SKLEARN_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "model.pkl")
 _model = None
-if os.path.exists(MODEL_PATH):
-    with open(MODEL_PATH, "rb") as f:
+if _neural_model is None and os.path.exists(SKLEARN_MODEL_PATH):
+    with open(SKLEARN_MODEL_PATH, "rb") as f:
         _model = pickle.load(f)
-    print("Loaded trained model.")
+    print("Loaded sklearn model.")
+
+# Scale factor: neural output is (-1, 1), we scale to centipawns
+# 500cp = roughly a rook advantage = near certain win
+NEURAL_SCALE = 500
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -261,12 +274,23 @@ def king_safety_penalty(board):
     return score
 
 
+# Evaluation cache — avoids recomputing the same position multiple times per search
+_eval_cache = {}
+EVAL_CACHE_MAX = 500_000
+
+
+def clear_eval_cache():
+    _eval_cache.clear()
+
+
 def evaluate(board):
+    # Check cache first
+    key = board._transposition_key()
+    if key in _eval_cache:
+        return _eval_cache[key]
+
     if board.is_checkmate():
-        if board.turn == chess.BLACK:
-            return -10000
-        else:
-            return 10000
+        return -10000 if board.turn == chess.BLACK else 10000
 
     if board.is_stalemate() or board.is_insufficient_material():
         return 0
@@ -289,13 +313,106 @@ def evaluate(board):
     score += pawn_structure_penalty(board)
     score += rook_open_file_bonus(board)
 
-    # Only apply king safety penalty in middlegame — in endgame the king should be active
     if not endgame:
         score += king_safety_penalty(board)
+    else:
+        score += rule_of_square(board)
+        score += king_opposition_bonus(board)
+        score += enemy_king_to_edge(board)
 
-    if _model is not None:
+    if _neural_model is not None:
+        # Neural model takes raw board position, outputs outcome in (-1, 1)
+        # Positive = White wins, Negative = Black wins
+        # We blend: hand-crafted score anchors tactics, neural score adds positional understanding
+        with torch.no_grad():
+            tensor = board_to_tensor(board).unsqueeze(0)
+            neural_out = _neural_model(tensor).item()
+        # neural_out is White-perspective: positive=White winning
+        # Our score is Black-perspective: positive=Black winning
+        # So negate neural_out when adding
+        score = score + int(-neural_out * NEURAL_SCALE)
+
+    elif _model is not None:
         features = extract_features(board)
         ml_score = _model.predict([features])[0]
-        return score + int(ml_score * 100)
+        score = score + int(ml_score * 100)
 
+    # Store in cache
+    if len(_eval_cache) < EVAL_CACHE_MAX:
+        _eval_cache[key] = score
+
+    return score
+
+def rule_of_square(board):
+    score = 0
+    UNSTOPPABLE_BONUS = 400
+    for color in [chess.WHITE, chess.BLACK]:
+        sign = 1 if color == chess.WHITE else -1
+        enemy = not color
+        enemy_king = board.king(enemy)
+        if enemy_king is None:
+            continue
+        enemy_has_pieces = any(
+            board.pieces(pt, enemy)
+            for pt in [chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT]
+        )
+        if enemy_has_pieces:
+            continue
+        for sq in board.pieces(chess.PAWN, color):
+            file = chess.square_file(sq)
+            rank = chess.square_rank(sq)
+            if color == chess.WHITE:
+                squares_to_promote = 7 - rank
+                promotion_rank = 7
+            else:
+                squares_to_promote = rank
+                promotion_rank = 0
+            promo_sq = chess.square(file, promotion_rank)
+            king_rank = chess.square_rank(enemy_king)
+            king_file = chess.square_file(enemy_king)
+            promo_rank = chess.square_rank(promo_sq)
+            promo_file = chess.square_file(promo_sq)
+            king_dist = max(abs(king_rank - promo_rank), abs(king_file - promo_file))
+            if board.turn == enemy:
+                king_dist -= 1
+            if king_dist > squares_to_promote:
+                score += sign * UNSTOPPABLE_BONUS
+    return score
+
+
+def king_opposition_bonus(board):
+    white_king = board.king(chess.WHITE)
+    black_king = board.king(chess.BLACK)
+    if white_king is None or black_king is None:
+        return 0
+    wr = chess.square_rank(white_king)
+    wf = chess.square_file(white_king)
+    br = chess.square_rank(black_king)
+    bf = chess.square_file(black_king)
+    rank_diff = abs(wr - br)
+    file_diff = abs(wf - bf)
+    if (rank_diff == 2 and file_diff == 0) or (rank_diff == 0 and file_diff == 2):
+        if board.turn == chess.BLACK:
+            return 40
+        else:
+            return -40
+    return 0
+
+
+def enemy_king_to_edge(board):
+    score = 0
+    for color in [chess.WHITE, chess.BLACK]:
+        sign = 1 if color == chess.WHITE else -1
+        enemy = not color
+        has_major = (board.pieces(chess.ROOK, color) or board.pieces(chess.QUEEN, color))
+        enemy_has_major = (board.pieces(chess.ROOK, enemy) or board.pieces(chess.QUEEN, enemy))
+        if not has_major or enemy_has_major:
+            continue
+        enemy_king = board.king(enemy)
+        if enemy_king is None:
+            continue
+        rank = chess.square_rank(enemy_king)
+        file = chess.square_file(enemy_king)
+        edge_score = max(3 - min(rank, 7 - rank), 0) + max(3 - min(file, 7 - file), 0)
+        score += sign * edge_score * 15
     return score
