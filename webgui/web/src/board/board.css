@@ -1,0 +1,151 @@
+/* The board's own look. Chessground supplies layout and the piece set; the
+   squares, highlights and coordinates are drawn here from the theme tokens. */
+
+.board {
+  position: relative;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--board-radius);
+  overflow: hidden;
+  /* A hairline so the light corner squares do not melt into the paper. */
+  box-shadow: 0 0 0 1px var(--color-line-strong);
+}
+
+.board__ground {
+  width: 100%;
+  height: 100%;
+}
+
+.board cg-board {
+  background-color: var(--board-light);
+}
+
+/* The dark squares are one untiled shape (squares.svg) filled with the theme
+   colour, so the colours stay in tokens.css and there are no tile seams when
+   the board is a fractional number of pixels wide. */
+.board cg-board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--board-dark);
+  -webkit-mask: url("./squares.svg") center / 100% 100% no-repeat;
+  mask: url("./squares.svg") center / 100% 100% no-repeat;
+}
+
+.board cg-board square.last-move {
+  background-color: var(--board-last-move);
+}
+
+.board cg-board square.selected {
+  background-color: var(--board-selected);
+}
+
+.board cg-board square.move-dest {
+  background: radial-gradient(var(--board-dest) 19%, transparent 20%);
+}
+
+.board cg-board square.move-dest.oc {
+  background: radial-gradient(transparent 0, transparent 79%, var(--board-dest) 80%);
+}
+
+.board cg-board square.move-dest:hover {
+  background: var(--board-dest-hover);
+}
+
+.board cg-board square.check {
+  background: radial-gradient(ellipse at center, var(--board-check) 0%, transparent 72%);
+}
+
+.board .cg-wrap coords {
+  z-index: 3; /* above the pieces (2), so a wide piece never hides its square's label */
+  font-family: var(--font-sans);
+  font-size: var(--text-coord);
+  font-weight: var(--weight-semibold);
+  opacity: 1;
+}
+
+.board .cg-wrap coords.ranks {
+  top: 0;
+  left: auto;
+  right: 3px;
+  width: auto;
+  align-items: flex-end;
+}
+
+.board .cg-wrap coords.ranks coord {
+  transform: translateY(6%);
+}
+
+.board .cg-wrap coords.files {
+  left: 4px;
+  bottom: 2px;
+  text-align: left;
+  text-transform: lowercase;
+}
+
+.board .orientation-white .ranks :nth-child(odd),
+.board .orientation-white .files :nth-child(even),
+.board .orientation-black .ranks :nth-child(even),
+.board .orientation-black .files :nth-child(odd) {
+  color: var(--board-coord-on-light);
+}
+
+.board .orientation-white .ranks :nth-child(even),
+.board .orientation-white .files :nth-child(odd),
+.board .orientation-black .ranks :nth-child(odd),
+.board .orientation-black .files :nth-child(even) {
+  color: var(--board-coord-on-dark);
+}
+
+/* ------------------------------------------------------------ promotion */
+
+.promotion {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgb(247 245 240 / 0.55);
+}
+
+.promotion__choices {
+  position: absolute;
+  left: calc(var(--promotion-column) * 12.5%);
+  width: 12.5%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.promotion[data-anchor="top"] .promotion__choices {
+  top: 0;
+}
+
+.promotion[data-anchor="bottom"] .promotion__choices {
+  bottom: 0;
+  flex-direction: column-reverse;
+}
+
+.promotion__choice {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.promotion__choice:hover,
+.promotion__choice:focus-visible {
+  background: var(--color-note-bg);
+  outline-offset: -2px;
+}
+
+.promotion .promotion__choice piece {
+  position: absolute;
+  inset: 6%;
+  width: auto;
+  height: auto;
+  background-size: cover;
+  pointer-events: none;
+}

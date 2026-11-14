@@ -1,99 +1,68 @@
-"""
-Play your bot against Stockfish at a specified ELO and report results.
+#!/usr/bin/env python3
+"""Play the engine against Stockfish at a fixed rating and estimate its strength.
 
-Requirements:
-    pip install chess
-    Download Stockfish from https://stockfishchess.org/download/
-    Set STOCKFISH_PATH below to wherever you put the binary.
+    python match.py --elo 1320 --games 40
+    python match.py --elo 1700 --games 40 --movetime 1
 
-Usage:
-    python match.py --elo 1000 --games 20
-    python match.py --elo 1200 --games 10
+The engine plays through uci.py with its real timed search, exactly as it does
+on Lichess. This is a shortcut for tools/match.py, which can pit any two UCI
+engines against each other.
 """
+
+from __future__ import annotations
 
 import argparse
-import chess
-import chess.engine
-from bot import get_best_move
+import os
+import sys
+from pathlib import Path
 
-STOCKFISH_PATH = "/Users/josephstefurak/stockfish/stockfish-macos-m1-apple-silicon"
-BOT_DEPTH = 3
+from tools.match import EngineSpec, format_summary, run_match
 
-
-def play_game(stockfish_elo, bot_color):
-    """
-    Play one game. bot_color is chess.WHITE or chess.BLACK.
-    Returns 1 if bot wins, 0 if draw, -1 if bot loses.
-    """
-    board = chess.Board()
-    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-    engine.configure({"UCI_LimitStrength": True, "UCI_Elo": stockfish_elo})
-
-    try:
-        while not board.is_game_over():
-            if board.turn == bot_color:
-                move = get_best_move(board, depth=BOT_DEPTH)
-            else:
-                result = engine.play(board, chess.engine.Limit(time=0.1))
-                move = result.move
-            board.push(move)
-    finally:
-        engine.quit()
-
-    outcome = board.outcome()
-    if outcome is None or outcome.winner is None:
-        return 0  # draw
-    if outcome.winner == bot_color:
-        return 1  # bot wins
-    return -1  # bot loses
+DEFAULT_STOCKFISH = "/Users/josephstefurak/stockfish/stockfish-macos-m1-apple-silicon"
+STOCKFISH_MIN_ELO = 1320  # Stockfish refuses anything lower
+STOCKFISH_MAX_ELO = 3190
+ROOT = Path(__file__).resolve().parent
 
 
-def run_match(stockfish_elo, num_games):
-    wins = draws = losses = 0
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--elo", type=int, default=STOCKFISH_MIN_ELO, help="Stockfish UCI_Elo")
+    parser.add_argument("--games", type=int, default=40)
+    parser.add_argument("--movetime", type=float, default=1.0, help="seconds per move for our engine")
+    parser.add_argument("--sf-movetime", type=float, default=0.1, help="seconds per move for Stockfish")
+    parser.add_argument("--concurrency", type=int, default=6, help="games played at the same time")
+    parser.add_argument(
+        "--stockfish",
+        default=os.environ.get("CHESSGM_STOCKFISH", DEFAULT_STOCKFISH),
+        help="path to the Stockfish binary (or set CHESSGM_STOCKFISH)",
+    )
+    parser.add_argument("--pgn", type=Path, help="write the games to this PGN file")
+    args = parser.parse_args(argv)
 
-    for i in range(num_games):
-        # Alternate colors each game
-        bot_color = chess.WHITE if i % 2 == 0 else chess.BLACK
-        color_str = "White" if bot_color == chess.WHITE else "Black"
+    if not STOCKFISH_MIN_ELO <= args.elo <= STOCKFISH_MAX_ELO:
+        parser.error(f"--elo must be between {STOCKFISH_MIN_ELO} and {STOCKFISH_MAX_ELO}")
+    if args.games < 1 or args.concurrency < 1:
+        parser.error("--games and --concurrency must be at least 1")
+    if args.movetime <= 0 or args.sf_movetime <= 0:
+        parser.error("move times must be positive")
+    if not Path(args.stockfish).is_file():
+        parser.error(f"Stockfish not found at {args.stockfish}")
 
-        print(f"Game {i + 1}/{num_games} (Bot plays {color_str})...", end=" ", flush=True)
-        result = play_game(stockfish_elo, bot_color)
-
-        if result == 1:
-            wins += 1
-            print("Bot wins")
-        elif result == 0:
-            draws += 1
-            print("Draw")
-        else:
-            losses += 1
-            print("Bot loses")
-
-    total = wins + draws + losses
-    score = (wins + 0.5 * draws) / total
-    print(f"\n--- Results vs Stockfish {stockfish_elo} ELO ---")
-    print(f"Wins: {wins}  Draws: {draws}  Losses: {losses}")
-    print(f"Score: {score:.1%}")
-
-    # Rough ELO estimate based on score
-    # ELO diff = -400 * log10(1/score - 1)
-    if 0 < score < 1:
-        import math
-        elo_diff = -400 * math.log10(1 / score - 1)
-        estimated_elo = stockfish_elo + elo_diff
-        print(f"Estimated bot ELO: ~{estimated_elo:.0f}")
-    elif score == 1.0:
-        print("Bot won every game — try a higher Stockfish ELO")
-    else:
-        print("Bot lost every game — try a lower Stockfish ELO")
+    ours = EngineSpec("chessgm", [sys.executable, str(ROOT / "uci.py")], {}, args.movetime)
+    stockfish = EngineSpec(
+        f"stockfish-{args.elo}",
+        [args.stockfish],
+        {"UCI_LimitStrength": True, "UCI_Elo": args.elo},
+        args.sf_movetime,
+    )
+    print(f"{args.games} games, chessgm at {args.movetime}s/move vs Stockfish at {args.elo} Elo\n")
+    result = run_match(ours, stockfish, args.games, concurrency=args.concurrency, pgn_path=args.pgn)
+    print()
+    print(format_summary(ours, stockfish, result))
+    low_note = "Stockfish's limited-strength ratings are approximate; treat the Elo figure as a guide."
+    print(low_note)
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--elo", type=int, default=1000, help="Stockfish ELO to play against")
-    parser.add_argument("--games", type=int, default=20, help="Number of games to play")
-    args = parser.parse_args()
-
-    print(f"Playing {args.games} games against Stockfish at {args.elo} ELO...")
-    print(f"Bot depth: {BOT_DEPTH}\n")
-    run_match(args.elo, args.games)
+    sys.exit(main())

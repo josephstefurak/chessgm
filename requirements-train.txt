@@ -1,0 +1,5 @@
+# Only for the legacy training scripts (train.py, train_neural.py). Not needed to play.
+-r requirements.txt
+torch==2.2.2
+numpy<2
+scikit-learn
