@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
+import time
 from pathlib import Path
 
 import chess
@@ -63,11 +65,36 @@ def test_a_short_match_runs_end_to_end(tmp_path: Path) -> None:
     assert "a vs b" in match.format_summary(a, b, result)
 
 
+def test_a_crashing_engine_is_reported_as_a_forfeit_not_a_win() -> None:
+    """A broken engine loses instantly; the summary must not present that as strength."""
+    good = match.EngineSpec("good", ENGINE, {}, 0.03)
+    broken = match.EngineSpec("broken", [sys.executable, "-c", "raise SystemExit(1)"], {}, 0.03)
+    before = threading.active_count()
+    with pytest.raises((chess.engine.EngineError, OSError, TimeoutError)):
+        match.play_game(good, broken, True, [], None)  # cannot even start: surfaces as an error
+    # The engine that did start must have been shut down, or the program would hang on exit.
+    deadline = time.monotonic() + 5
+    while threading.active_count() > before and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert threading.active_count() <= before
+
+
+def test_forfeits_are_flagged_in_the_summary() -> None:
+    a = match.EngineSpec("a", ENGINE, {}, 0.03)
+    b = match.EngineSpec("b", ENGINE, {}, 0.03)
+    stats = match.SideStats()
+    forfeit = match.GameResult(1.0, True, "b error: engine process died", True, 3, "", stats, stats)
+    normal = match.GameResult(0.5, False, "stalemate", False, 80, "", stats, stats)
+    summary = match.format_summary(a, b, match.MatchResult(1, 1, 0, stats, stats, [forfeit, normal]))
+    assert "WARNING: 1 of 2 games were forfeits" in summary
+    clean = match.format_summary(a, b, match.MatchResult(0, 1, 0, stats, stats, [normal]))
+    assert "WARNING" not in clean
+
+
 def test_a_game_on_the_clock_does_not_flag() -> None:
     spec = match.EngineSpec("clock", ENGINE, {}, None)
     game = match.play_game(spec, spec, True, [], match.Clock(3.0, 0.05))
-    assert "lost on time" not in game.reason
-    assert "error" not in game.reason
+    assert not game.forfeit, game.reason
 
 
 def test_bench_runs_at_fixed_depth() -> None:

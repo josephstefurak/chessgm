@@ -78,6 +78,7 @@ class GameResult:
     a_score: float  # 1.0 win, 0.5 draw, 0.0 loss, from engine A's point of view
     a_white: bool
     reason: str
+    forfeit: bool  # ended by a crash, an illegal move or the clock rather than by chess
     plies: int
     pgn: str
     a_stats: SideStats
@@ -100,6 +101,10 @@ class MatchResult:
     @property
     def score(self) -> float:
         return (self.wins + 0.5 * self.draws) / self.total if self.total else 0.0
+
+    @property
+    def forfeits(self) -> list[GameResult]:
+        return [game for game in self.games if game.forfeit]
 
 
 def load_openings(path: Path = OPENINGS_FILE) -> list[list[chess.Move]]:
@@ -172,13 +177,17 @@ def play_game(
     stats = {True: SideStats(), False: SideStats()}  # keyed by "is engine A"
     remaining = {chess.WHITE: clock.base, chess.BLACK: clock.base} if clock else None
     reason = ""
+    forfeit = False
     a_score: float | None = None
     game_id = object()
     eng_a: chess.engine.SimpleEngine | None = None
     eng_b: chess.engine.SimpleEngine | None = None
 
     try:
-        eng_a, eng_b = _open(a), _open(b)
+        # Opened one at a time: if the second fails to start, the first must still be closed
+        # in the `finally` below, or its reader thread keeps the whole program alive.
+        eng_a = _open(a)
+        eng_b = _open(b)
         while a_score is None:
             outcome = board.outcome(claim_draw=True)
             if outcome is not None:
@@ -210,7 +219,7 @@ def play_game(
             try:
                 result = engine.play(board, limit, game=game_id, info=chess.engine.INFO_BASIC)
             except chess.engine.EngineError as exc:
-                a_score, reason = (0.0 if is_a else 1.0), f"{spec.name} error: {exc}"
+                a_score, reason, forfeit = (0.0 if is_a else 1.0), f"{spec.name} error: {exc}", True
                 break
             elapsed = time.perf_counter() - started
             stats[is_a].add(elapsed, result.info.get("depth"))
@@ -218,12 +227,12 @@ def play_game(
             if spec.movetime is None and clock is not None and remaining is not None:
                 remaining[board.turn] -= elapsed
                 if remaining[board.turn] < 0:
-                    a_score, reason = (0.0 if is_a else 1.0), f"{spec.name} lost on time"
+                    a_score, reason, forfeit = (0.0 if is_a else 1.0), f"{spec.name} lost on time", True
                     break
                 remaining[board.turn] += clock.inc
 
             if result.move is None or result.move not in board.legal_moves:
-                a_score, reason = (0.0 if is_a else 1.0), f"{spec.name} gave no legal move"
+                a_score, reason, forfeit = (0.0 if is_a else 1.0), f"{spec.name} gave no legal move", True
                 break
             board.push(result.move)
     finally:
@@ -237,7 +246,9 @@ def play_game(
     white_score = a_score if a_white else 1.0 - a_score
     game.headers["Result"] = {1.0: "1-0", 0.5: "1/2-1/2", 0.0: "0-1"}[white_score]
     game.headers["Termination"] = reason
-    return GameResult(a_score, a_white, reason, len(board.move_stack), str(game), stats[True], stats[False])
+    return GameResult(
+        a_score, a_white, reason, forfeit, len(board.move_stack), str(game), stats[True], stats[False]
+    )
 
 
 def run_match(
@@ -292,6 +303,15 @@ def format_summary(a: EngineSpec, b: EngineSpec, result: MatchResult) -> str:
         f"  score {result.score:.1%} (95% CI {low:.1%} to {high:.1%})"
     )
     lines = [headline]
+    forfeits = result.forfeits
+    if forfeits:
+        # A crashing engine loses every game instantly, which looks like a brilliant result
+        # for its opponent. Say so loudly instead of letting it pass as a chess result.
+        reasons = sorted({game.reason for game in forfeits})
+        lines.append(
+            f"WARNING: {len(forfeits)} of {result.total} games were forfeits, not chess results."
+            f" This match does not measure strength. Reasons: {'; '.join(reasons)[:300]}"
+        )
     elo = elo_from_score(result.score)
     if elo is not None:
         elo_low, elo_high = elo_from_score(low), elo_from_score(high)
