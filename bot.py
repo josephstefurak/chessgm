@@ -1,6 +1,6 @@
 import chess
 import time
-from evaluator import evaluate, clear_eval_cache
+from evaluator import evaluate, evaluate_fast, clear_eval_cache
 
 PIECE_VALUES_SIMPLE = {
     chess.PAWN: 1,
@@ -51,7 +51,7 @@ def order_moves(board, moves):
 
 
 def quiescence(board, alpha, beta, maximizing):
-    stand_pat = evaluate(board)
+    stand_pat = evaluate_fast(board)
 
     if maximizing:
         if stand_pat >= beta:
@@ -120,16 +120,22 @@ def minimax(board, depth, alpha, beta, maximizing, deadline=None):
         return quiescence(board, alpha, beta, maximizing)
 
     # --- Null move pruning ---
-    if depth >= 3 and not board.is_check():
+    # Try passing our turn. If position is still good enough after opponent
+    # gets a free move, we can prune. Only applies when clearly not in zugzwang
+    # (skip in endgames with few pieces where zugzwang is common).
+    pieces = len(board.piece_map())
+    if depth >= 3 and not board.is_check() and pieces > 10:
         board.push(chess.Move.null())
         try:
             null_score = minimax(board, depth - 1 - NULL_MOVE_REDUCTION,
-                                 -beta, -beta + 1, not maximizing, deadline)
-            null_score = -null_score
+                                 alpha, beta, not maximizing, deadline)
         finally:
             board.pop()
-        if null_score >= beta:
+        # If even after giving opponent a free move we still beat beta, prune
+        if maximizing and null_score >= beta:
             return beta
+        if not maximizing and null_score <= alpha:
+            return alpha
 
     legal_moves = order_moves(board, list(board.legal_moves))
     best_score = float("-inf") if maximizing else float("inf")

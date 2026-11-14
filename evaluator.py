@@ -283,8 +283,58 @@ def clear_eval_cache():
     _eval_cache.clear()
 
 
+def evaluate_fast(board):
+    """
+    Fast hand-crafted only evaluation for quiescence search.
+    No neural net — quiescence is called thousands of times per move
+    and is mainly resolving captures where material counting is sufficient.
+    """
+    key = board._transposition_key()
+    if key in _eval_cache:
+        return _eval_cache[key]
+
+    if board.is_checkmate():
+        return -10000 if board.turn == chess.BLACK else 10000
+
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+
+    endgame = is_endgame(board)
+    score = 0
+
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece is None:
+            continue
+        value = PIECE_VALUES[piece.piece_type]
+        value += piece_square_bonus(piece.piece_type, square, piece.color, endgame)
+        if piece.color == chess.BLACK:
+            score += value
+        else:
+            score -= value
+
+    score += passed_pawn_bonus(board)
+    score += pawn_structure_penalty(board)
+    score += rook_open_file_bonus(board)
+
+    if not endgame:
+        score += king_safety_penalty(board)
+    else:
+        score += rule_of_square(board)
+        score += king_opposition_bonus(board)
+        score += enemy_king_to_edge(board)
+
+    if len(_eval_cache) < EVAL_CACHE_MAX:
+        _eval_cache[key] = score
+
+    return score
+
+
 def evaluate(board):
-    # Check cache first
+    """
+    Full evaluation including neural net (if loaded).
+    Only called at main search leaf nodes, not in quiescence.
+    """
     key = board._transposition_key()
     if key in _eval_cache:
         return _eval_cache[key]
@@ -321,15 +371,9 @@ def evaluate(board):
         score += enemy_king_to_edge(board)
 
     if _neural_model is not None:
-        # Neural model takes raw board position, outputs outcome in (-1, 1)
-        # Positive = White wins, Negative = Black wins
-        # We blend: hand-crafted score anchors tactics, neural score adds positional understanding
         with torch.no_grad():
             tensor = board_to_tensor(board).unsqueeze(0)
             neural_out = _neural_model(tensor).item()
-        # neural_out is White-perspective: positive=White winning
-        # Our score is Black-perspective: positive=Black winning
-        # So negate neural_out when adding
         score = score + int(-neural_out * NEURAL_SCALE)
 
     elif _model is not None:
@@ -337,7 +381,6 @@ def evaluate(board):
         ml_score = _model.predict([features])[0]
         score = score + int(ml_score * 100)
 
-    # Store in cache
     if len(_eval_cache) < EVAL_CACHE_MAX:
         _eval_cache[key] = score
 
