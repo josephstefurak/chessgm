@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from webgui.server import schemas as wire
 from webgui.server.clock import PRESETS, TimeControl
 from webgui.server.engine_port import EnginePort
-from webgui.server.events import HEARTBEAT_SECONDS, state_stream
+from webgui.server.events import HEARTBEAT_SECONDS, StopSignal, state_stream
 from webgui.server.security import LocalOnlyMiddleware
 from webgui.server.session import GameSession, SessionError
 
@@ -52,6 +52,8 @@ def create_app(
     # The interactive docs are off: they load scripts from a CDN and add routes nobody reviewed.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.session = session
+    stop_streams = StopSignal()
+    app.state.end_streams = stop_streams.set  # called by the runner as shutdown begins
     streams = _Counter(MAX_EVENT_STREAMS)
 
     @app.exception_handler(SessionError)
@@ -75,7 +77,7 @@ def create_app(
 
         async def stream() -> AsyncIterator[str]:
             try:
-                async for chunk in state_stream(session, heartbeat):
+                async for chunk in state_stream(session, heartbeat, stop_streams):
                     yield chunk
             finally:
                 streams.give_back()

@@ -21,11 +21,10 @@ import time
 import webbrowser
 from pathlib import Path
 
-import uvicorn
-
 from main import DEFAULT_THINK_SECONDS
 from webgui.server.app import create_app
 from webgui.server.engine_port import SearchEngine
+from webgui.server.runner import serve
 
 HOST = "127.0.0.1"  # never anything else: this server is for this machine only
 DEFAULT_PORT = 8765
@@ -38,7 +37,7 @@ BUILD_HELP = f"""The browser UI has not been built yet. Build it once with:
     npm run build
 
 then run this command again."""
-SHUTDOWN_GRACE_SECONDS = 1  # open event streams would otherwise hold Ctrl-C up
+SHUTDOWN_GRACE_SECONDS = 1  # for a request still in flight at Ctrl-C; streams end at once
 BROWSER_WAIT_SECONDS = 10.0
 
 
@@ -95,14 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_browser:
         threading.Thread(target=open_browser_when_ready, args=(url, args.port), daemon=True).start()
 
-    uvicorn.run(
-        app,
-        host=HOST,
-        port=args.port,
-        log_level="warning",
-        timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
-    )
-    return 0
+    started = serve(app, host=HOST, port=args.port, grace_seconds=SHUTDOWN_GRACE_SECONDS)
+    return 0 if started else 1
 
 
 if __name__ == "__main__":

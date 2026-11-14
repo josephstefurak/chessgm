@@ -14,11 +14,10 @@ import argparse
 import sys
 from pathlib import Path
 
-import uvicorn
-
 from tests.gui.fakes import ScriptedEngine
 from webgui.server.app import create_app
 from webgui.server.clock import PRESETS, TimeControl
+from webgui.server.runner import serve
 
 BUILD_DIR = Path(__file__).resolve().parents[2] / "webgui" / "web" / "dist"
 # Id "0+1": four seconds each and one second a move. Only this test server offers it.
@@ -40,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         static_dir=BUILD_DIR,
         time_controls=(*PRESETS, FLAG_FALL_CONTROL),
     )
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", timeout_graceful_shutdown=1)
+    serve(app, host="127.0.0.1", port=args.port, grace_seconds=1)
     return 0
 
 

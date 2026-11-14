@@ -13,7 +13,7 @@ A Python chess engine on top of `python-chess`, playable locally (browser or ter
 | `uci.py` | UCI front end. This is what `lichess-bot` launches |
 | `main.py` | Local play in the terminal |
 | `gui.py` | Local play in the browser: launcher for the server in `webgui/server` |
-| `webgui/server/` | Local HTTP server that owns the game: `session.py` (all rules and state), `clock.py`, `engine_port.py` (the engine on a worker thread), `schemas.py` (wire format), `security.py`, `events.py`, `app.py` (routes) |
+| `webgui/server/` | Local HTTP server that owns the game: `session.py` (all rules and state), `clock.py`, `engine_port.py` (the engine on a worker thread), `schemas.py` (wire format), `security.py`, `events.py`, `app.py` (routes), `runner.py` (runs uvicorn and shuts it down) |
 | `webgui/web/` | The browser UI: React + TypeScript, built with Vite. `src/theme/tokens.css` holds every visual value; `src/board/Board.tsx` is the only file that touches chessground |
 | `opening_book.py` | Hardcoded opening lines (unchanged from the original engine) |
 | `tools/match.py` | Engine-vs-engine match runner for any two UCI engines |
@@ -49,6 +49,7 @@ A Python chess engine on top of `python-chess`, playable locally (browser or ter
 - **Scores** are converted from side-to-move to White's point of view in `session._score_out` and nowhere else.
 - **Clocks**: the server is the authority and the browser only animates between snapshots. Flag fall is checked under the session lock by whichever arrives first, a request or the flag timer. Each side's clock starts after its own first move.
 - **Game end** is `session._ending`: draws by repetition and the 50-move rule are automatic only once they have happened. This differs from `main.py`'s `outcome(claim_draw=True)` on purpose (see `DECISIONS.md`).
+- **Shutdown**: `runner.LocalServer` ends every open event stream before uvicorn starts waiting for connections to close. Without that, Ctrl-C with the page open waits out the grace period and logs a traceback. Start the server through `runner.serve`, not `uvicorn.run`.
 - **Local only**: the server binds to 127.0.0.1; `security.LocalOnlyMiddleware` refuses any other Host, and any POST without this server's exact Origin, a JSON content type and a body under 1 KB. Responses carry a strict CSP (no inline script or style). `tests/gui/test_http.py` enumerates every route and fails until each is classified.
 - **Wire format**: `webgui/server/schemas.py` and `webgui/web/src/api/types.ts` mirror each other by hand. Change both together.
 
