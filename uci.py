@@ -39,6 +39,7 @@ SEARCH_TOGGLES: dict[str, str] = {
     "Aspiration": "aspiration",
     "CheckExtension": "check_extension",
     "BadCapturePruning": "bad_capture_pruning",
+    "LateMovePruning": "late_move_pruning",
 }
 assert set(SEARCH_TOGGLES.values()) == {f.name for f in fields(SearchConfig)}
 

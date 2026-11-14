@@ -57,6 +57,7 @@ class SearchConfig:
     aspiration: bool = True
     check_extension: bool = True
     bad_capture_pruning: bool = True
+    late_move_pruning: bool = True
 
 
 @dataclass(frozen=True)
@@ -461,6 +462,10 @@ class Searcher:
             and abs(alpha) < MATE_BOUND
             and static + 150 * depth <= alpha
         )
+        # Late move pruning: near the leaves, quiet moves this far down a well-ordered list
+        # almost never matter, so only the first few are searched.
+        quiet_limit = 4 + 3 * depth * depth if cfg.late_move_pruning and prunable and depth <= 3 else 1_000
+        quiets_seen = 0
         enemy = board.occupied_co[not board.turn]
         ep_square = board.ep_square
         best = -INFINITY
@@ -475,10 +480,12 @@ class Searcher:
             board.push(move)
             gives_check = board.is_check()
 
-            # Futility: a quiet, non-checking move this far below alpha will not rescue the node.
-            if futile and index > 0 and quiet and not gives_check:
-                board.pop()
-                continue
+            if quiet and not gives_check and index > 0:
+                quiets_seen += 1
+                # Futility: a quiet, non-checking move this far below alpha will not rescue the node.
+                if futile or (quiets_seen > quiet_limit and best > -MATE_BOUND):
+                    board.pop()
+                    continue
 
             if index == 0:
                 score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)

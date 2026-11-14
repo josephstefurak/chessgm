@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import fields
 
 import chess
 import pytest
@@ -47,7 +48,7 @@ def test_mate_score_helpers() -> None:
 
 def test_plain_alpha_beta_still_finds_mate() -> None:
     """With every pruning technique switched off the answer must not change."""
-    off = SearchConfig(False, False, False, False, False, False, False)
+    off = SearchConfig(**{f.name: False for f in fields(SearchConfig)})
     result = Searcher(off).search(chess.Board(P.MATE_IN_2), Limits(depth=5))
     assert result.mate_in == 2
 
