@@ -6,3 +6,10 @@ __pycache__/
 .ruff_cache/
 *.pgn
 /out/
+
+# Browser GUI (webgui/web)
+node_modules/
+/webgui/web/dist/
+/webgui/web/test-results/
+/webgui/web/playwright-report/
+*.tsbuildinfo

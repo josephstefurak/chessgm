@@ -1,4 +1,6 @@
 -r requirements.txt
+-r requirements-gui.txt
 pytest
 ruff
 mypy
+httpx2  # the HTTP client the server tests drive the GUI with

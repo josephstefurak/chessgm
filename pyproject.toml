@@ -11,7 +11,7 @@ extend-exclude = [
 ]
 
 [tool.mypy]
-files = ["engine", "tools", "tests", "uci.py", "main.py", "match.py"]
+files = ["engine", "tools", "tests", "webgui", "uci.py", "main.py", "match.py", "gui.py"]
 disallow_untyped_defs = true
 check_untyped_defs = true
 warn_unused_ignores = true

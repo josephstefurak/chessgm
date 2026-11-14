@@ -1,0 +1,4 @@
+# The browser GUI (gui.py): the local web server. Pinned like chess itself.
+-r requirements.txt
+fastapi==0.162.7
+uvicorn==0.54.0
