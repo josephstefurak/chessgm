@@ -6,6 +6,7 @@ import chess
 import pytest
 
 from engine import evaluation
+from engine import weights as W
 from engine.evaluation import evaluate
 from tests import positions as P
 
@@ -26,8 +27,26 @@ def random_positions(count: int, seed: int) -> list[chess.Board]:
     return boards
 
 
-def test_start_position_is_level() -> None:
-    assert evaluate(chess.Board()) == 0
+def test_start_position_is_level_apart_from_the_move() -> None:
+    board = chess.Board()
+    assert evaluate(board) == W.TEMPO
+    board.push(chess.Move.null())
+    assert evaluate(board) == -W.TEMPO
+
+
+@pytest.mark.parametrize(("mg", "eg"), [(0, 0), (5, -3), (-5, 3), (-120, -77), (3000, -2500), (-1, 0), (0, -1)])
+def test_packed_scores_round_trip(mg: int, eg: int) -> None:
+    packed = evaluation._pack(mg, eg)
+    assert evaluation._unpack(packed) == (mg, eg)
+    assert evaluation._unpack(-packed) == (-mg, -eg)
+    assert evaluation._unpack(packed + evaluation._pack(7, -9)) == (mg + 7, eg - 9)
+
+
+def test_blend_is_symmetric_and_hits_both_ends() -> None:
+    assert evaluation._blend(100, 40, W.PHASE_MAX) == 100
+    assert evaluation._blend(100, 40, 0) == 40
+    for mg, eg, phase in [(7, -3, 5), (-7, 3, 5), (1, 0, 1), (-1, 0, 1)]:
+        assert evaluation._blend(mg, eg, phase) == -evaluation._blend(-mg, -eg, phase)
 
 
 def test_colour_symmetry() -> None:
@@ -58,10 +77,50 @@ def test_unstoppable_pawn_is_winning_for_its_owner() -> None:
     assert evaluate(chess.Board(P.UNSTOPPABLE_PAWN)) > 400
 
 
-def test_rook_prefers_open_file() -> None:
-    closed = chess.Board("4k3/pppp1ppp/8/8/8/8/PPPP1PPP/R3K3 w - - 0 1")
-    opened = chess.Board("4k3/pppp1ppp/8/8/8/8/PPPP1PPP/4RK2 w - - 0 1")
-    assert evaluate(opened) > evaluate(closed)
+def test_rook_file_bonuses() -> None:
+    def rook_term(fen: str) -> tuple[int, int]:
+        board = chess.Board(fen)
+        white, black = board.occupied_co[chess.WHITE], board.occupied_co[chess.BLACK]
+        return evaluation._unpack(
+            evaluation._rooks(board.rooks & white, board.rooks & black, board.pawns & white, board.pawns & black)
+        )
+
+    closed = rook_term("6k1/pppp1ppp/8/8/8/8/PPPP1PPP/R5K1 w - - 0 1")
+    half_open = rook_term("6k1/pppppppp/8/8/8/8/PPPP1PPP/4R1K1 w - - 0 1")
+    fully_open = rook_term("6k1/pppp1ppp/8/8/8/8/PPPP1PPP/4R1K1 w - - 0 1")
+    assert closed == (0, 0)
+    assert half_open == (W.ROOK_SEMI_OPEN_FILE_MG, W.ROOK_SEMI_OPEN_FILE_EG)
+    assert fully_open == (W.ROOK_OPEN_FILE_MG, W.ROOK_OPEN_FILE_EG)
+
+
+def test_bishop_pair_is_worth_more_than_bishop_and_knight() -> None:
+    pair = chess.Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/2B1KB2 w - - 0 1")
+    mixed = chess.Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/2B1K1N1 w - - 0 1")
+    assert evaluate(pair) > evaluate(mixed)
+
+
+def test_king_shelter() -> None:
+    white_pawns = chess.Board("6k1/8/8/8/8/8/5PPP/6K1 w - - 0 1").pawns
+    assert evaluation._king_shelter(chess.G1, chess.WHITE, white_pawns) == 3 * W.PAWN_SHIELD_NEAR
+    assert evaluation._king_shelter(chess.G1, chess.WHITE, 0) == -3 * W.KING_OPEN_FILE_PENALTY
+    assert evaluation._king_shelter(chess.E4, chess.WHITE, white_pawns) == 0  # king has left home
+    black_pawns = chess.Board("6k1/5ppp/8/8/8/8/8/6K1 w - - 0 1").pawns
+    assert evaluation._king_shelter(chess.G8, chess.BLACK, black_pawns) == 3 * W.PAWN_SHIELD_NEAR
+
+
+def test_pawnless_small_edge_is_scaled_toward_a_draw() -> None:
+    rook_vs_bishop = chess.Board("4k3/8/3b4/8/8/8/8/R3K3 w - - 0 1")
+    rook_vs_nothing = chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1")
+    assert 0 < evaluate(rook_vs_bishop) < 100
+    assert evaluate(rook_vs_nothing) > 400
+
+
+def test_blocked_or_catchable_pawn_is_not_called_unstoppable() -> None:
+    catchable = chess.Board("8/8/2k5/8/P7/8/8/K7 b - - 0 1")  # king steps into the square
+    blocked = chess.Board("8/K7/P7/8/8/8/8/7k b - - 0 1")
+    free = chess.Board(P.UNSTOPPABLE_PAWN)
+    assert evaluate(free) > evaluate(catchable) + 300
+    assert evaluate(free) > evaluate(blocked) + 300
 
 
 def test_doubled_and_isolated_pawns_are_penalised() -> None:
@@ -71,10 +130,11 @@ def test_doubled_and_isolated_pawns_are_penalised() -> None:
 
 
 def test_opposition_goes_to_the_side_not_to_move() -> None:
-    black_to_move = chess.Board("8/8/4k3/8/4K3/8/8/8 b - - 0 1")
-    white_to_move = chess.Board("8/8/4k3/8/4K3/8/8/8 w - - 0 1")
-    assert evaluate(black_to_move) > 0  # White holds the opposition
-    assert evaluate(white_to_move) < 0  # Black holds it
+    # A pawn ending with the kings facing each other. Having to move loses the opposition,
+    # and that outweighs the small bonus for having the move.
+    black_to_move = chess.Board("8/p7/4k3/8/4K3/8/P7/8 b - - 0 1")
+    white_to_move = chess.Board("8/p7/4k3/8/4K3/8/P7/8 w - - 0 1")
+    assert evaluate(black_to_move) - evaluate(white_to_move) == 2 * (W.OPPOSITION_BONUS - W.TEMPO)
 
 
 def test_lone_king_is_driven_to_the_edge() -> None:
@@ -96,3 +156,4 @@ def test_evaluate_does_not_modify_the_board(fen: str) -> None:
     board = chess.Board(fen)
     evaluate(board)
     assert board.fen() == fen
+
