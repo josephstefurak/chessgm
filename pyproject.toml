@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+# Legacy engine and training scripts are frozen; they are not linted.
+extend-exclude = [
+    "bot.py", "evaluator.py", "features.py", "neural_net.py", "train.py", "train_neural.py",
+    "legacy_uci.py", "opening_book.py",
+]
+
+[tool.mypy]
+files = ["engine", "tools", "tests", "uci.py", "main.py", "match.py"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+
+# Frozen legacy modules are imported by the tools and tests but are not type-checked.
+[[tool.mypy.overrides]]
+module = ["bot", "evaluator", "features", "neural_net", "opening_book", "legacy_uci"]
+ignore_errors = true

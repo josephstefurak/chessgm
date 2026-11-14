@@ -28,8 +28,8 @@ import chess
 from bot import get_best_move
 from neural_net import ChessNet, board_to_tensor
 
-NUM_GAMES = 500
-SEARCH_DEPTH = 2
+NUM_GAMES = 400
+SEARCH_DEPTH = 3
 MAX_MOVES = 150
 EPOCHS = 30
 BATCH_SIZE = 512
