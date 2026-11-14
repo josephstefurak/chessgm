@@ -109,6 +109,30 @@ class _Abort(Exception):
     """Raised inside the search when time is up or a stop was requested."""
 
 
+def position_key(board: chess.Board) -> int:
+    """Identity of a position for the transposition table and repetition checks.
+
+    Built from the raw bitboards rather than `Board._transposition_key()`, which does
+    extra work (cleaning castling rights, testing en passant legality) on every call
+    and is about four times slower. Black's occupancy is implied by the piece boards
+    minus White's, so it is left out.
+    """
+    return hash(
+        (
+            board.pawns,
+            board.knights,
+            board.bishops,
+            board.rooks,
+            board.queens,
+            board.kings,
+            board.occupied_co[True],
+            board.turn,
+            board.castling_rights,
+            board.ep_square,
+        )
+    )
+
+
 def _move_id(move: chess.Move) -> int:
     """Pack a move into an int: from, to, promotion. Never 0 for a real move."""
     packed = move.from_square | (move.to_square << 6)
@@ -250,7 +274,7 @@ class Searcher:
         replay = board.root()
         keys: list[int] = []
         for move in board.move_stack:
-            keys.append(hash(replay._transposition_key()))
+            keys.append(position_key(replay))
             replay.push(move)
         return keys
 
@@ -262,7 +286,7 @@ class Searcher:
         seen: set[int] = set()
         try:
             while len(pv) < depth:
-                key = hash(board._transposition_key())
+                key = position_key(board)
                 entry = self.tt.get(key)
                 if entry is None or not entry[3] or key in seen:
                     break
@@ -357,7 +381,7 @@ class Searcher:
 
         cfg = self.config
         is_pv = beta - alpha > 1
-        key = hash(board._transposition_key())
+        key = position_key(board)
         in_check = board.is_check()
 
         if ply > 0:
@@ -523,7 +547,7 @@ class Searcher:
         if not self.nodes & ABORT_CHECK_MASK:
             self._check_abort()
 
-        key = hash(board._transposition_key())
+        key = position_key(board)
         in_check = board.is_check()
         if in_check:
             # No standing pat while in check: every evasion must be looked at.
