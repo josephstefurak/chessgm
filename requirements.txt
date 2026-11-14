@@ -1,0 +1,4 @@
+# Runtime: everything needed to play (uci.py, main.py, match.py, tools/).
+# Pinned because the engine keys positions with chess.Board._transposition_key(),
+# a private API.
+chess==1.11.2

@@ -1,0 +1,11 @@
+# Decisions
+
+Judgment calls made while building, newest first. Entries are updated when revisited, never deleted.
+
+| Date | Decision | Where | Why | Client confirmation needed | Status |
+|---|---|---|---|---|---|
+| 2026-11-13 | A/B rule for strength changes: play the candidate against the previous version at a fast time control; keep at 50% or better, drop if clearly negative | `tools/match.py`, every search and eval change | Search and eval ideas that are "standard" still lose strength when implemented badly or when the engine is too slow to benefit; measuring is the only way to know | No | Confirmed (in approved plan) |
+| 2026-11-13 | `chess` pinned to 1.11.2 and `Board._transposition_key()` kept as the position key | `requirements.txt`, `engine/search.py` | It is a private API, but the public `chess.polyglot.zobrist_hash` recomputes the hash from scratch on every call and is far slower. Pinning makes the dependency on the private method safe | No | Confirmed (in approved plan) |
+| 2026-11-13 | Draws score 0 with no contempt. Repetition, 50-move and insufficient material are all scored as draws inside the search | `engine/search.py` | Replaces the legacy "300cp penalty for repeating when ahead on material" and the stalemate skip. A winning side avoids a 0 score on its own; a losing side now correctly seeks it. Contempt was considered and left out because the bot's eval is not reliable enough to know when it is truly better | No | Confirmed (in approved plan) |
+| 2026-11-13 | Legacy engine (`bot.py`, `evaluator.py`, `features.py`, `neural_net.py`, `train.py`, `train_neural.py`) is frozen, not patched or deleted. The new engine lives in `engine/` | whole repo | Working agreement says build forward. The legacy files are still what the training scripts use, and they serve as the baseline opponent for A/B matches. Their known bugs are fixed by moving the playing path off them | No | Confirmed (in approved plan) |
+| 2026-11-13 | The neural net is not used for play | `uci.py`, `main.py` | Measured: its output is noise (says White is +20cp with White missing a queen; swings a median of 168cp across quiet moves in one equal position). Learning is deferred | No | Confirmed (in approved plan) |
